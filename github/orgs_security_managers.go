@@ -10,26 +10,47 @@ import (
 	"fmt"
 )
 
+func (s *OrganizationsService) GetSecurityManagerRole(ctx context.Context, org string) (*CustomOrgRoles, error) {
+	roles, _, err := s.ListRoles(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, role := range roles.CustomRepoRoles {
+		if *role.Name == "security_manager" {
+			return role, nil
+		}
+	}
+
+	return nil, fmt.Errorf("security manager role not found")
+}
+
 // ListSecurityManagerTeams lists all security manager teams for an organization.
 //
 // GitHub API docs: https://docs.github.com/rest/orgs/security-managers#list-security-manager-teams
 //
 //meta:operation GET /orgs/{org}/security-managers
 func (s *OrganizationsService) ListSecurityManagerTeams(ctx context.Context, org string) ([]*Team, *Response, error) {
-	u := fmt.Sprintf("orgs/%v/security-managers", org)
-
-	req, err := s.client.NewRequest("GET", u, nil)
+	securityManagerRole, err := s.GetSecurityManagerRole(ctx, org)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var teams []*Team
-	resp, err := s.client.Do(ctx, req, &teams)
-	if err != nil {
-		return nil, resp, err
-	}
+	options := &ListOptions{PerPage: 100}
+	securityManagerTeams := make([]*Team, 0)
+	for {
+		teams, resp, err := s.ListTeamsAssignedToOrgRole(ctx, org, securityManagerRole.GetID(), options)
+		if err != nil {
+			return nil, nil, err
+		}
 
-	return teams, resp, nil
+		securityManagerTeams = append(securityManagerTeams, teams...)
+		if resp.NextPage == 0 {
+			return securityManagerTeams, resp, nil
+		}
+
+		options.Page = resp.NextPage
+	}
 }
 
 // AddSecurityManagerTeam adds a team to the list of security managers for an organization.
@@ -38,13 +59,12 @@ func (s *OrganizationsService) ListSecurityManagerTeams(ctx context.Context, org
 //
 //meta:operation PUT /orgs/{org}/security-managers/teams/{team_slug}
 func (s *OrganizationsService) AddSecurityManagerTeam(ctx context.Context, org, team string) (*Response, error) {
-	u := fmt.Sprintf("orgs/%v/security-managers/teams/%v", org, team)
-	req, err := s.client.NewRequest("PUT", u, nil)
+	securityManagerRole, err := s.GetSecurityManagerRole(ctx, org)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.client.Do(ctx, req, nil)
+	return s.AssignOrgRoleToTeam(ctx, org, team, securityManagerRole.GetID())
 }
 
 // RemoveSecurityManagerTeam removes a team from the list of security managers for an organization.
@@ -53,11 +73,10 @@ func (s *OrganizationsService) AddSecurityManagerTeam(ctx context.Context, org, 
 //
 //meta:operation DELETE /orgs/{org}/security-managers/teams/{team_slug}
 func (s *OrganizationsService) RemoveSecurityManagerTeam(ctx context.Context, org, team string) (*Response, error) {
-	u := fmt.Sprintf("orgs/%v/security-managers/teams/%v", org, team)
-	req, err := s.client.NewRequest("DELETE", u, nil)
+	securityManagerRole, err := s.GetSecurityManagerRole(ctx, org)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.client.Do(ctx, req, nil)
+	return s.RemoveOrgRoleFromTeam(ctx, org, team, securityManagerRole.GetID())
 }
